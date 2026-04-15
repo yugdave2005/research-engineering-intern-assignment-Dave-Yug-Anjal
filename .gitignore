@@ -7,3 +7,4 @@ cache/
 *.index
 .streamlit/secrets.toml
 node_modules/
+.env.example
