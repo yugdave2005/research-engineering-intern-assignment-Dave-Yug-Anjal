@@ -716,11 +716,27 @@ def render_clustering(df: pd.DataFrame, fdf: pd.DataFrame):
                 "Some posts may be 'Miscellaneous' (outliers not assigned to any cluster).")
 
     if run_clustering or "cluster_result" not in st.session_state:
-        sample_df = fdf.sample(min(sample_size, len(fdf)), random_state=42).reset_index(drop=True)
+        # Get sample indices
+        sample_size = min(sample_size, len(fdf))
+        sample_indices = fdf.sample(sample_size, random_state=42).index
+        sample_df = fdf.loc[sample_indices].reset_index(drop=True)
+
+        # Try to load pre-computed embeddings for the sample to speed up clustering
+        sample_embs = None
+        emb_path = Path("cache/embeddings.npy")
+        if emb_path.exists():
+            try:
+                all_embs = np.load(str(emb_path))
+                # Map fdf indices back to the original df positions (assumes fdf is from df)
+                # We need the positional indices in the original df to match embeddings.npy
+                sample_embs = all_embs[sample_indices]
+            except Exception as e:
+                print(f"Failed to load cached embeddings: {e}")
 
         with st.spinner(f"🔬 Clustering {len(sample_df)} posts into ~{n_topics} topics…"):
             try:
-                result_df, model = cluster_topics(sample_df, n_topics=n_topics)
+                # result_df now includes umap_x and umap_y
+                result_df, model = cluster_topics(sample_df, n_topics=n_topics, embeddings=sample_embs)
                 topic_summary   = get_topic_summary(model)
                 st.session_state["cluster_result"] = result_df
                 st.session_state["cluster_summary"] = topic_summary
@@ -728,6 +744,7 @@ def render_clustering(df: pd.DataFrame, fdf: pd.DataFrame):
                 st.success(f"✅ Found {topic_summary[topic_summary['topic_id'] != -1]['topic_id'].nunique()} topics!")
             except Exception as e:
                 st.error(f"Clustering failed: {e}")
+                st.exception(e)
                 return
 
     result_df    = st.session_state.get("cluster_result", pd.DataFrame())
@@ -753,8 +770,9 @@ def render_clustering(df: pd.DataFrame, fdf: pd.DataFrame):
         labels={"topic_label_short": "Topic", "umap_x": "", "umap_y": ""},
     )
     fig_umap.update_traces(marker=dict(size=5))
-    fig_umap.update_layout(**PLOTLY_LAYOUT, height=550,
-        legend=dict(itemsizing="constant", font=dict(size=11)))
+    cl_layout = {**PLOTLY_LAYOUT}
+    cl_layout["legend"] = dict(itemsizing="constant", font=dict(size=11))
+    fig_umap.update_layout(**cl_layout, height=550)
     st.plotly_chart(fig_umap, use_container_width=True)
 
     # ── Topic table ──────────────────────────────────────────────────────────-
